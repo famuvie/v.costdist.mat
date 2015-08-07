@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/4357/famuvie/v.costdist.mat.svg)](https://zenodo.org/badge/latestdoi/4357/famuvie/v.costdist.mat)
+
 ![GRASS logo](http://grass.osgeo.org/uploads/images/logo/grass.smlogo.gif)
 
 * * * * *
