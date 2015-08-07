@@ -1,0 +1,1 @@
+main:Matrices de distancias basadas en el coste:v.costdist.mat:Utiliza r.cost iterativamente para calcular las matrices de distancias de mínimo coste entre dos o más conjuntos de puntos

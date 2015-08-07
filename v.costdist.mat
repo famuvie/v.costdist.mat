@@ -1,0 +1,223 @@
+#!/bin/bash
+#############################################################################
+#
+# MODULE:       v.costdist.mat
+#		version Sep 22, 2009
+#
+# AUTHOR:       Facundo Muñoz, Universitat de València, Spain
+#
+# PURPOSE:      Calculating cost-based distances between points
+#		see: A. López-Quílez & F. Muñoz (2009). `Geostatistical computing
+#		of acoustic maps in the presence of barriers'.
+#		Mathematical and Computer Modelling 50(5-6):929-938.
+#
+# COPYRIGHT:    (c)
+#               This program is free software under the GNU General Public
+#               License (>=v2). Read the file COPYING that comes with GRASS
+#               for details.
+#
+#############################################################################
+#
+# Description:
+#  v.costdist.mat determines de cumulative cost of moving between each pair of points
+#  from two given maps over a cost surface
+#  e.g.
+#   - obtaining the "true" distance matrix of a set of noise measures in a city
+#     considering buildings as non-transparent areas for sound
+#
+# Notes:
+#  Results are stored as new columns in "to" map's attributes tables
+#  Try and keep the number of input sites to under a few dozen, as the
+#  process is very computationally expensive. You might consider creating
+#  a few hundred MB RAM-disk for a temporary mapset to avoid thrashing your
+#  hard drive (r.cost is heavy on disk IO).
+
+#%Module
+#%  description: Cost-based distances between points
+#%End
+
+#%option
+#% key: from
+#% key_desc: filename
+#% type: string
+#% gisprompt: old,vector,vector
+#% description: Name of existing vector points map
+#% required : yes
+#%end
+
+#%option
+#% key: to
+#% key_desc: filename
+#% type: string
+#% gisprompt: old,vector,vector
+#% multiple : yes
+#% description: Name(s) of existing vector points map(s) where cost-distances to "from" points are to be stored
+#% required : yes
+#%end
+
+#%option
+#% key: cost
+#% key_desc: filename
+#% type: string
+#% gisprompt: old,cell,raster
+#% description: Name of existing raster file containing cost information
+#% required : yes
+#%end
+
+#%flag
+#% key: k
+#% description: Use the 'Knight's move'. Forwarded to r.cost (see r.cost).
+#%end
+
+if [ -z $GISBASE ] ; then
+    echo "You have to be in GRASS to use this." 1>&2
+    exit 1
+fi
+
+if [ "$1" != "@ARGS_PARSED@" ] ; then
+  exec $GISBASE/bin/g.parser "$0" "$@"
+fi
+
+	# NOTE: Checking existence of input files is carried out by g.parser
+	# thus, unneeded here
+
+echo
+echo "v.costdist.mat -- Cost-based Distance Matrix"
+echo "Processing $GIS_OPT_FROM -> $GIS_OPT_TO   cost=$GIS_OPT_COST"
+echo "------------------------------------------------------------------------"
+
+FROM_FILE="$GIS_OPT_FROM"
+COST_FILE="$GIS_OPT_COST"
+
+unset KNIGHT
+if [ $GIS_FLAG_K -eq 1 ] ; then
+   KNIGHT="-k"
+fi
+
+TMP_FROM=`g.tempfile pid=$$`
+if [ $? -ne 0 ] || [ -z "$TMP_FROM" ] ; then
+    echo "ERROR: unable to create temporary files" 1>&2
+    exit 1
+fi
+
+# crop out only points in region
+v.in.region output=tmp_cdm_region_$$ > /dev/null 2>&1
+v.select ainput="$FROM_FILE" binput=tmp_cdm_region_$$ \
+    atype=point btype=area output=tmp_cdm_from_$$ > /dev/null 2>&1
+
+# save in the temporary file an ascii representation of 'from_file'
+v.out.ascii tmp_cdm_from_$$ > "$TMP_FROM"
+
+#  find N: number of source points
+N="`cat "$TMP_FROM" | wc -l`"
+
+if [ "$N" -gt 52 ] ; then
+   echo "WARNING: Computation is expensive! Please consider fewer points." 1>&2
+   echo "Press enter to continue.." 1>&2
+   read -t 30
+fi
+
+# checking existence of target columns in each of 'to_files'
+# if they don't exist, creates; else verifies they are complete.
+
+# hoy many files are we dealing with
+TOFILENUM=`echo $GIS_OPT_TO | tr ',' '\n' | wc -l`
+
+# prepare columns in attribute tables
+nf=1
+while [ "$nf" -le "$TOFILENUM" ]
+  do
+    TOFILE=`echo "$GIS_OPT_TO" | cut -d',' -f$nf`
+
+    if [ -z "$TOFILE" ] ; then
+      echo 'ERROR: Empty file name! Did you leave a trailing comma?' 1>&2
+      exit 1
+    fi
+
+	# at the end we need as many columns as source points i.e. N
+	NCOL="`db.columns "$TOFILE" | grep -c "cdm_[[:digit:]]"`"
+
+	if [ $NCOL -eq 0 ] ; then
+		echo ""
+		echo "*** Incorporating disctance matrix to $TOFILE ***"
+# FIX: Now columns are created later, using the actual cat numbers of the from map
+#		nc=1
+#		while [ "$nc" -le "$N" ]
+#		  do
+#			# could be interesting to work in real or even integer precision?
+#			# echo "ALTER TABLE $TOFILE ADD COLUMN cdm_$nc double precision" |
+#			# db.execute
+#			echo "ALTER TABLE $TOFILE ADD COLUMN cdm_$nc int" |
+#			db.execute
+#			nc=`expr $nc + 1`
+#		  done
+	elif [ $NCOL -eq $N ] ; then
+		echo "WARNING: distance matrix already exists in $TOFILE and will be
+		overwritten" 1>&2
+	else
+		echo "ERROR: found inconsistent distance matrix in $TOFILE" 1>&2
+		echo "$NCOL distance columns were found, out of $N. Please do the cleaning"
+		1>&2
+		g.mremove vect=tmp_cdm_*_$$ > /dev/null 2>&1
+		rm -f "$TMP_FROM" > /dev/null 2>&1
+		exit 1
+	fi
+    nf=`expr $nf + 1`
+  done
+
+
+# gen cost maps for each source point
+echo "Generating cost maps.." 1>&2
+#figure out which column cats are in (3 or 4 depending on if there is a z coordinate)
+CATCOL="`cat "$TMP_FROM" | head -1 | tr '|' '\n' | wc -l`"
+
+NUM=1
+for POS in `cat "$TMP_FROM"` ; do
+
+#    echo "POS=[$POS]"
+    EASTING=`echo "$POS" | cut -f1 -d"|"`
+    NORTHING=`echo "$POS" | cut -f2 -d"|"`
+    CAT=`echo "$POS" | cut -f"$CATCOL" -d"|"`
+
+    echo "site $NUM of $N  e=$EASTING  n=$NORTHING  cat=$CAT"
+
+    if [ -z "`r.what input=$COST_FILE east_north=$EASTING,$NORTHING | grep -v "*"`" ] ; then
+	echo "  Skipping, site lays outside of cost map." 1>&2
+	N=`expr $N - 1`
+	continue
+    fi
+
+    r.cost $KNIGHT in=$COST_FILE out=cost_site.$CAT coordinate=$EASTING,$NORTHING 2>/dev/null>&1
+
+	# incorporating cost-distance values to columns in each of the "to_files"
+	nf=1
+	while [ "$nf" -le "$TOFILENUM" ]
+	  do
+	    TOFILE=`echo "$GIS_OPT_TO" | cut -d',' -f$nf`
+		# if $TOFILE has column cdm_$CAT, we drop it out, and recreate it
+		if [ -n "`db.columns table=$TOFILE | grep cdm_$CAT`" ] ; then
+		  echo "ALTER TABLE $TOFILE DROP COLUMN cdm_$CAT" | db.execute
+		fi
+		echo "ALTER TABLE $TOFILE ADD COLUMN cdm_$CAT int" | db.execute
+		# now we populate it with the corresponding cost value
+		v.what.rast vector=$TOFILE raster=cost_site.$CAT column=cdm_$CAT  2>/dev/null>&1
+		#echo "writing column $CAT of file $TOFILE..."
+		#remember to clean out possible evident absurd values from v.what.rast
+		# (no problem with this, so far.)
+		nf=`expr $nf + 1`
+	  done
+
+    NUM="`expr $NUM + 1`"
+done
+
+
+# Clean up
+
+echo "Cleanup .." 1>&2
+#g.mremove -f rast=cost_site.* | grep REMOVE
+g.mremove -f vect=tmp_cdm_*_$$ | grep REMOVE
+rm -f "$TMP_FROM"
+
+# done!
+echo "Done! Wrote results to attribute tables of: ${GIS_OPT_TO}." 1>&2
+exit 0

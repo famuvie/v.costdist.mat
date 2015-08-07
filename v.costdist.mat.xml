@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE task SYSTEM "grass-interface.dtd">
+<task name="v.costdist.mat">
+	<description>
+		Cost-based distances between points
+	</description>
+	<parameter name="from" type="string" required="yes" multiple="no">
+		<description>
+			Name of existing vector points map
+		</description>
+		<keydesc>
+			<item order="1">filename</item>
+		</keydesc>
+		<gisprompt age="old" element="vector" prompt="vector" />
+	</parameter>
+	<parameter name="to" type="string" required="yes" multiple="yes">
+		<description>
+			Name(s) of existing vector points map(s) where cost-distances to "from" points are to be stored
+		</description>
+		<keydesc>
+			<item order="1">filename</item>
+		</keydesc>
+		<gisprompt age="old" element="vector" prompt="vector" />
+	</parameter>
+	<parameter name="cost" type="string" required="yes" multiple="no">
+		<description>
+			Name of existing raster file containing cost information
+		</description>
+		<keydesc>
+			<item order="1">filename</item>
+		</keydesc>
+		<gisprompt age="old" element="cell" prompt="raster" />
+	</parameter>
+	<flag name="k">
+		<description>
+			Use the 'Knight's move'. Forwarded to r.cost (see r.cost).
+		</description>
+	</flag>
+	<flag name="verbose">
+		<description>
+			Verbose module output
+		</description>
+	</flag>
+	<flag name="quiet">
+		<description>
+			Quiet module output
+		</description>
+	</flag>
+</task>
